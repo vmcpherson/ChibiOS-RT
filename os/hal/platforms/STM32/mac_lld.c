@@ -313,7 +313,13 @@ void mac_lld_start(MACDriver *macp) {
 #endif
 
   /* MAC configuration.*/
+#if 0
   ETH->MACFFR    = 0;
+#endif
+  // VRM
+  //
+  ETH->MACFFR    = (1 << 4);
+  
   ETH->MACFCR    = 0;
   ETH->MACVLANTR = 0;
 
