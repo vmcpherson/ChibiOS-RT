@@ -1,4 +1,16 @@
 /*
+https://my.st.com/public/STe2ecommunities/mcu/Lists/cortex_mx_stm32/Flat.aspx?RootFolder=https%3a%2f%2fmy%2est%2ecom%2fpublic%2fSTe2ecommunities%2fmcu%2fLists%2fcortex_mx_stm32%2fSTM32%20%2b%20lwIP%20and%20multicast%20support&FolderCTID=0x01200200770978C69A1141439FE559EB459D7580009C4E14902C3CDE46A77F0FFD06506F5B&currentviews=1738
+
+http://t37162.network-lwip-general.networkforum.info/upnp-on-lwip-t37162.html
+
+  All you need to do is create a
+    network interface with the UPnP IP multicast address
+    ....
+*/
+
+
+
+/*
     ChibiOS/RT - Copyright (C) 2006-2013 Giovanni Di Sirio
 
     Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +73,9 @@
 
 #include "lwipthread.h"
 
+#include "lwip/dhcp.h"
+#include "lwip/netifapi.h"
+#include "lwip/igmp.h"
 #include "lwip/opt.h"
 
 #include "lwip/def.h"
@@ -96,6 +111,7 @@ static void low_level_init(struct netif *netif) {
   netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
   /* Do whatever else is needed to initialize interface. */
+  netif->flags |= NETIF_FLAG_IGMP;
 }
 
 /*
@@ -249,10 +265,24 @@ msg_t lwip_thread(void *p) {
   netif_add(&thisif, &ip, &netmask, &gateway, NULL, ethernetif_init, tcpip_input);
 
   netif_set_default(&thisif);
+
+#if 0
   netif_set_up(&thisif);
+#endif
+
+  netifapi_dhcp_start(&thisif);
+
+  //TODO check whether this tcip callback is necessary
+  tcpip_callback_with_block((tcpip_callback_fn) igmp_start, &thisif, 0);
 
   /* Setup event sources.*/
+#if 0  
   evtInit(&evt, LWIP_LINK_POLL_INTERVAL);
+#endif
+
+  uint32_t ticks = 0;           //BMW added
+  evtInit(&evt, MS2ST(100));	//BMW set to 100ms to also service DHCP and IGMP, every 100ms (we use ticks count to service only at their preferred intervals)
+  
   evtStart(&evt);
   chEvtRegisterMask(&evt.et_es, &el0, PERIODIC_TIMER_ID);
   chEvtRegisterMask(macGetReceiveEventSource(&ETHD1), &el1, FRAME_RECEIVED_ID);
@@ -264,6 +294,7 @@ msg_t lwip_thread(void *p) {
   while (TRUE) {
     eventmask_t mask = chEvtWaitAny(ALL_EVENTS);
     if (mask & PERIODIC_TIMER_ID) {
+#if 0
       bool_t current_link_status = macPollLinkStatus(&ETHD1);
       if (current_link_status != netif_is_link_up(&thisif)) {
         if (current_link_status)
@@ -272,7 +303,34 @@ msg_t lwip_thread(void *p) {
         else
           tcpip_callback_with_block((tcpip_callback_fn) netif_set_link_down,
                                      &thisif, 0);
-      }
+#endif
+
+        //BMW added to run igmp and autoip timer every 100ms,
+        //dhcp_fine_tmr every 500ms, and dhcp_coarse_tmr every minute.
+        //(make sure this matches intervals in igmp.h, autoip.h and dhcp.h)
+        //TODO check whether tcip callbacks are necessary
+        tcpip_callback_with_block((tcpip_callback_fn) igmp_tmr, NULL, 0);
+//        tcpip_callback_with_block((tcpip_callback_fn) autoip_tmr, NULL, 0);
+        if (ticks % 5 == 0) {
+            tcpip_callback_with_block((tcpip_callback_fn) dhcp_fine_tmr, NULL, 0);
+        }
+        if (ticks >= 60 * 10) {
+            ticks -= 60 * 10;
+            tcpip_callback_with_block((tcpip_callback_fn) dhcp_coarse_tmr, NULL, 0);
+        }
+
+        //BMW added "if", so this only runs every 5 seconds
+        if (ticks % 50 == 0) {
+            bool_t current_link_status = macPollLinkStatus(&ETHD1);
+            if (current_link_status != netif_is_link_up(&thisif)) {
+                if (current_link_status)
+                    tcpip_callback_with_block((tcpip_callback_fn) netif_set_link_up,
+                                              &thisif, 0);
+                else
+                    tcpip_callback_with_block((tcpip_callback_fn) netif_set_link_down,
+                                              &thisif, 0);
+            }
+        }
     }
     if (mask & FRAME_RECEIVED_ID) {
       struct pbuf *p;
