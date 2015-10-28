@@ -221,6 +221,20 @@ static err_t ethernetif_init(struct netif *netif) {
   return ERR_OK;
 }
 
+// TODO - Decouple debugging message output from application code.
+//
+void APP_DEBUG_MSG(const char *fmt, ...);
+static void status_callback(struct netif *netif)
+{
+    APP_DEBUG_MSG("Assigned DHCP Address = %d.%d.%d.%d\r\n",
+                  (netif->ip_addr.addr >> 0) & 0xff,
+                  (netif->ip_addr.addr >> 8) & 0xff,
+                  (netif->ip_addr.addr >> 16) & 0xff,
+                  (netif->ip_addr.addr >> 24) & 0xff);
+
+    // TODO :- Dump out net mask and gateway address.
+}
+
 /**
  * @brief LWIP handling thread.
  *
@@ -266,6 +280,8 @@ msg_t lwip_thread(void *p) {
 
   netif_set_default(&thisif);
 
+  netif_set_status_callback(&thisif, status_callback);
+  
 #if 0
   netif_set_up(&thisif);
 #endif
